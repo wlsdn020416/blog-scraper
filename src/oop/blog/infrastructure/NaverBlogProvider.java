@@ -9,35 +9,40 @@ import java.net.URLEncoder;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
 public class NaverBlogProvider extends AbstractHttpClient implements BlogProvider {
     private static final String BLOG_API_URL = "https://openapi.naver.com/v1/search/blog.json";
+    private static final Duration PAGE_FETCH_TIMEOUT = Duration.ofSeconds(3);
 
     private final String clientId;
     private final String clientSecret;
 
     public NaverBlogProvider() {
         super(BLOG_API_URL);
-        this.clientId = requireEnv("NAVER_CLIENT_ID");
-        this.clientSecret = requireEnv("NAVER_CLIENT_SECRET");
+        this.clientId = AppEnvironment.require("NAVER_CLIENT_ID");
+        this.clientSecret = AppEnvironment.require("NAVER_CLIENT_SECRET");
     }
 
     @Override
-    public List<BlogPost> fetchPosts(String searchQuery, int limit, BlogSortOption sortOption) {
+    public List<BlogPost> fetchPosts(String searchQuery, int limit, int start, BlogSortOption sortOption) {
         if (searchQuery == null || searchQuery.isBlank()) {
             throw new IllegalArgumentException("검색어를 입력해주세요.");
         }
         if (limit <= 0 || limit > 100) {
             throw new IllegalArgumentException("검색 건수는 1부터 100 사이여야 합니다.");
         }
+        if (start <= 0 || start > 1000) {
+            throw new IllegalArgumentException("검색 시작 위치는 1부터 1000 사이여야 합니다.");
+        }
 
         String url = endpoint + "?query="
                 + URLEncoder.encode(searchQuery, StandardCharsets.UTF_8)
                 + "&display=" + limit
                 + "&sort=" + sortOption.getQueryValue()
-                + "&start=1";
+                + "&start=" + start;
 
         HttpRequest request = HttpRequest.newBuilder()
                 .GET()
@@ -67,13 +72,15 @@ public class NaverBlogProvider extends AbstractHttpClient implements BlogProvide
     List<BlogPost> parseBlogPosts(String body) {
         List<BlogPost> posts = new ArrayList<>();
         for (String item : extractItemObjects(body)) {
+            String link = getJsonString(item, "link");
             posts.add(new BlogPost(
                     cleanNaverText(getJsonString(item, "title")),
-                    getJsonString(item, "link"),
+                    link,
                     cleanNaverText(getJsonString(item, "description")),
                     cleanNaverText(getJsonString(item, "bloggername")),
                     getJsonString(item, "bloggerlink"),
-                    getJsonString(item, "postdate")
+                    getJsonString(item, "postdate"),
+                    findImageUrl(link)
             ));
         }
         return posts;
@@ -184,11 +191,183 @@ public class NaverBlogProvider extends AbstractHttpClient implements BlogProvide
                 .replace("&gt;", ">");
     }
 
-    private static String requireEnv(String name) {
-        String value = System.getenv(name);
-        if (value == null || value.isBlank()) {
-            throw new IllegalStateException(name + " 환경변수가 필요합니다.");
+    private String findImageUrl(String postUrl) {
+        if (postUrl == null || postUrl.isBlank()) {
+            return "";
         }
-        return value;
+
+        String imageUrl = fetchImageUrl(postUrl);
+        if (!imageUrl.isBlank()) {
+            return imageUrl;
+        }
+
+        String mobileUrl = toMobileBlogUrl(postUrl);
+        if (!mobileUrl.equals(postUrl)) {
+            return fetchImageUrl(mobileUrl);
+        }
+
+        return "";
+    }
+
+    private String fetchImageUrl(String postUrl) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .GET()
+                    .uri(URI.create(postUrl))
+                    .timeout(PAGE_FETCH_TIMEOUT)
+                    .header("User-Agent", "Mozilla/5.0")
+                    .build();
+            HttpResponse<String> response = httpClient.send(
+                    request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+            );
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return "";
+            }
+            return extractRepresentativeImage(response.body(), postUrl);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private String extractRepresentativeImage(String html, String baseUrl) {
+        String ogImage = extractMetaContent(html, "property", "og:image");
+        if (!ogImage.isBlank()) {
+            return resolveUrl(baseUrl, cleanHtmlText(ogImage));
+        }
+
+        String twitterImage = extractMetaContent(html, "name", "twitter:image");
+        if (!twitterImage.isBlank()) {
+            return resolveUrl(baseUrl, cleanHtmlText(twitterImage));
+        }
+
+        String firstImage = extractFirstImageSrc(html);
+        if (!firstImage.isBlank()) {
+            return resolveUrl(baseUrl, cleanHtmlText(firstImage));
+        }
+
+        return "";
+    }
+
+    private String extractMetaContent(String html, String keyAttribute, String keyValue) {
+        String lowerHtml = html.toLowerCase();
+        int cursor = 0;
+        while (cursor >= 0 && cursor < html.length()) {
+            int metaStart = lowerHtml.indexOf("<meta", cursor);
+            if (metaStart < 0) {
+                return "";
+            }
+            int metaEnd = lowerHtml.indexOf(">", metaStart);
+            if (metaEnd < 0) {
+                return "";
+            }
+            String tag = html.substring(metaStart, metaEnd + 1);
+            if (keyValue.equalsIgnoreCase(extractAttribute(tag, keyAttribute))) {
+                return extractAttribute(tag, "content");
+            }
+            cursor = metaEnd + 1;
+        }
+        return "";
+    }
+
+    private String extractFirstImageSrc(String html) {
+        String lowerHtml = html.toLowerCase();
+        int cursor = 0;
+        while (cursor >= 0 && cursor < html.length()) {
+            int imgStart = lowerHtml.indexOf("<img", cursor);
+            if (imgStart < 0) {
+                return "";
+            }
+            int imgEnd = lowerHtml.indexOf(">", imgStart);
+            if (imgEnd < 0) {
+                return "";
+            }
+            String src = extractAttribute(html.substring(imgStart, imgEnd + 1), "src");
+            if (!src.isBlank() && !src.startsWith("data:")) {
+                return src;
+            }
+            cursor = imgEnd + 1;
+        }
+        return "";
+    }
+
+    private String extractAttribute(String tag, String attributeName) {
+        String lowerTag = tag.toLowerCase();
+        String lowerAttribute = attributeName.toLowerCase();
+        int nameStart = lowerTag.indexOf(lowerAttribute);
+        while (nameStart >= 0) {
+            int nameEnd = nameStart + lowerAttribute.length();
+            boolean validStart = nameStart == 0 || !Character.isLetterOrDigit(lowerTag.charAt(nameStart - 1));
+            boolean validEnd = nameEnd >= lowerTag.length() || !Character.isLetterOrDigit(lowerTag.charAt(nameEnd));
+            if (validStart && validEnd) {
+                int equalsIndex = lowerTag.indexOf('=', nameEnd);
+                if (equalsIndex >= 0) {
+                    int valueStart = equalsIndex + 1;
+                    while (valueStart < tag.length() && Character.isWhitespace(tag.charAt(valueStart))) {
+                        valueStart++;
+                    }
+                    if (valueStart < tag.length()) {
+                        char quote = tag.charAt(valueStart);
+                        if (quote == '"' || quote == '\'') {
+                            int valueEnd = tag.indexOf(quote, valueStart + 1);
+                            if (valueEnd >= 0) {
+                                return tag.substring(valueStart + 1, valueEnd);
+                            }
+                        } else {
+                            int valueEnd = valueStart;
+                            while (valueEnd < tag.length()
+                                    && !Character.isWhitespace(tag.charAt(valueEnd))
+                                    && tag.charAt(valueEnd) != '>') {
+                                valueEnd++;
+                            }
+                            return tag.substring(valueStart, valueEnd);
+                        }
+                    }
+                }
+            }
+            nameStart = lowerTag.indexOf(lowerAttribute, nameStart + lowerAttribute.length());
+        }
+        return "";
+    }
+
+    private String resolveUrl(String baseUrl, String imageUrl) {
+        if (imageUrl == null || imageUrl.isBlank()) {
+            return "";
+        }
+        try {
+            return URI.create(baseUrl).resolve(imageUrl).toString();
+        } catch (Exception e) {
+            return imageUrl;
+        }
+    }
+
+    private String toMobileBlogUrl(String postUrl) {
+        try {
+            URI uri = URI.create(postUrl);
+            if (!"blog.naver.com".equalsIgnoreCase(uri.getHost())) {
+                return postUrl;
+            }
+
+            String[] parts = uri.getPath().split("/");
+            if (parts.length < 3 || parts[1].isBlank() || parts[2].isBlank()) {
+                return postUrl;
+            }
+
+            return "https://m.blog.naver.com/" + parts[1] + "/" + parts[2];
+        } catch (Exception e) {
+            return postUrl;
+        }
+    }
+
+    private String cleanHtmlText(String value) {
+        return value
+                .replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">");
     }
 }

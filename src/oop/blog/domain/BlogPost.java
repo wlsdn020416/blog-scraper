@@ -6,6 +6,7 @@ public record BlogPost(
         String description,
         String bloggerName,
         String bloggerLink,
-        String postDate
+        String postDate,
+        String imageUrl
 ) {
 }

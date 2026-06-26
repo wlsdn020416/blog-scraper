@@ -5,6 +5,7 @@ import oop.blog.domain.BlogSortOption;
 public record BlogSearchCommand(
         String searchQuery,
         int limit,
+        int start,
         BlogSortOption sortOption
 ) {
     public BlogSearchCommand {
@@ -13,6 +14,9 @@ public record BlogSearchCommand(
         }
         if (limit <= 0 || limit > 100) {
             throw new IllegalArgumentException("검색 건수는 1부터 100 사이여야 합니다.");
+        }
+        if (start <= 0 || start > 1000) {
+            throw new IllegalArgumentException("검색 시작 위치는 1부터 1000 사이여야 합니다.");
         }
         if (sortOption == null) {
             sortOption = BlogSortOption.DATE;

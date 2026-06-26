@@ -3,17 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Naver Blog Scraper</title>
-    <link rel="stylesheet" href="/styles.css">
+    <title>Naver Blog Scraper | 네이버 블로그 실시간 검색</title>
+    <meta name="description" content="키워드를 입력하고 조회 버튼을 누르면 네이버 블로그 검색 결과를 실시간으로 가져오는 웹 애플리케이션입니다.">
+    <meta name="keywords" content="네이버 블로그, 블로그 검색, 네이버 검색 API, 블로그 스크래퍼">
+    <meta name="robots" content="index, follow">
+    <meta name="theme-color" content="#03c75a">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Naver Blog Scraper">
+    <meta property="og:title" content="Naver Blog Scraper | 네이버 블로그 실시간 검색">
+    <meta property="og:description" content="키워드를 입력하고 조회 버튼을 누르면 네이버 블로그 검색 결과를 실시간으로 가져옵니다.">
+    <meta property="og:image" content="/favicon.svg">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Naver Blog Scraper | 네이버 블로그 실시간 검색">
+    <meta name="twitter:description" content="키워드를 입력하고 조회 버튼을 누르면 네이버 블로그 검색 결과를 실시간으로 가져옵니다.">
+    <meta name="twitter:image" content="/favicon.svg">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/favicon.svg">
+    <link rel="stylesheet" href="/styles.css?v=3">
 </head>
 <body>
-<main class="app-shell">
-    <section class="search-panel" aria-labelledby="page-title">
+<header class="floating-header" aria-labelledby="page-title">
+    <div class="header-inner">
         <div class="brand-row">
             <div class="brand-mark" aria-hidden="true">N</div>
             <div>
                 <h1 id="page-title">Naver Blog Scraper</h1>
-                <p>검색어를 입력하고 조회하면 최신 블로그 검색 결과를 가져옵니다.</p>
+                <p>검색어를 입력하면 최신 블로그 글과 대표 이미지를 함께 가져옵니다.</p>
             </div>
         </div>
 
@@ -24,8 +39,10 @@
                 <button id="search-button" type="submit">조회</button>
             </div>
         </form>
-    </section>
+    </div>
+</header>
 
+<main class="app-shell">
     <section class="result-panel" aria-live="polite">
         <div class="result-header">
             <h2>조회 결과</h2>
@@ -33,8 +50,11 @@
         </div>
         <p id="status-message" class="status-message">키워드를 입력한 뒤 조회 버튼을 눌러주세요.</p>
         <div id="result-list" class="result-list"></div>
+        <div class="load-more-row">
+            <button id="load-more-button" class="secondary-button" type="button" hidden>더보기</button>
+        </div>
     </section>
 </main>
-<script src="/app.js"></script>
+<script src="/app.js?v=4"></script>
 </body>
 </html>

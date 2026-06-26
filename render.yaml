@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: naver-blog-scraper
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: NAVER_CLIENT_ID
+        sync: false
+      - key: NAVER_CLIENT_SECRET
+        sync: false
+      - key: PORT
+        value: 8080

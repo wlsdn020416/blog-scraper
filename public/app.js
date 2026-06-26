@@ -1,9 +1,17 @@
 const form = document.querySelector("#search-form");
 const keywordInput = document.querySelector("#keyword");
 const searchButton = document.querySelector("#search-button");
+const loadMoreButton = document.querySelector("#load-more-button");
 const resultCount = document.querySelector("#result-count");
 const statusMessage = document.querySelector("#status-message");
 const resultList = document.querySelector("#result-list");
+
+const pageSize = 10;
+const seenLinks = new Set();
+let currentKeyword = "";
+let nextStart = 1;
+let renderedCount = 0;
+let isLoading = false;
 
 form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -15,15 +23,34 @@ form.addEventListener("submit", async (event) => {
         return;
     }
 
-    setLoading(true);
-    setStatus("조회 중입니다.", false);
+    currentKeyword = keyword;
+    nextStart = 1;
+    renderedCount = 0;
+    seenLinks.clear();
     resultList.replaceChildren();
     resultCount.textContent = "0건";
+    loadMoreButton.hidden = true;
+
+    await fetchPage({ reset: true });
+});
+
+loadMoreButton.addEventListener("click", async () => {
+    await fetchPage({ reset: false });
+});
+
+async function fetchPage({ reset }) {
+    if (isLoading) {
+        return;
+    }
+
+    setLoading(true);
+    setStatus(reset ? "조회 중입니다." : "다음 글을 불러오는 중입니다.", false);
 
     try {
         const params = new URLSearchParams({
-            query: keyword,
-            limit: "10",
+            query: currentKeyword,
+            limit: String(pageSize),
+            start: String(nextStart),
             sort: "date"
         });
         const response = await fetch(`/api/blogs/refresh?${params.toString()}`, {
@@ -35,22 +62,71 @@ form.addEventListener("submit", async (event) => {
             throw new Error(data.message || "조회에 실패했습니다.");
         }
 
-        renderResults(data.items || []);
-        resultCount.textContent = `${data.count || 0}건`;
-        setStatus(data.count > 0 ? `"${data.query}" 검색 결과입니다.` : "검색 결과가 없습니다.", false);
+        const newItems = filterNewItems(data.items || []);
+        renderResults(newItems, { append: !reset });
+
+        renderedCount += newItems.length;
+        nextStart = data.nextStart || nextStart + pageSize;
+        resultCount.textContent = `${renderedCount}건`;
+
+        const hasMore = (data.items || []).length === pageSize && nextStart <= 1000;
+        loadMoreButton.hidden = !hasMore;
+
+        if (renderedCount === 0) {
+            setStatus("검색 결과가 없습니다.", false);
+        } else if (newItems.length === 0 && hasMore) {
+            setStatus("이번 페이지는 이미 본 글이어서 제외했습니다. 더보기를 한 번 더 눌러주세요.", false);
+        } else {
+            setStatus(`"${data.query}" 검색 결과입니다. 중복 글은 자동 제외됩니다.`, false);
+        }
     } catch (error) {
         setStatus(error.message, true);
     } finally {
         setLoading(false);
     }
-});
+}
 
-function renderResults(items) {
+function filterNewItems(items) {
+    return items.filter((item) => {
+        const key = item.link || item.title;
+        if (!key || seenLinks.has(key)) {
+            return false;
+        }
+        seenLinks.add(key);
+        return true;
+    });
+}
+
+function renderResults(items, { append }) {
     const fragment = document.createDocumentFragment();
 
     items.forEach((item) => {
         const card = document.createElement("article");
         card.className = "post-card";
+
+        const media = document.createElement("a");
+        media.className = item.imageUrl ? "post-media" : "post-media post-media-empty";
+        media.href = item.link;
+        media.target = "_blank";
+        media.rel = "noreferrer";
+
+        if (item.imageUrl) {
+            const image = document.createElement("img");
+            image.src = `/api/images?url=${encodeURIComponent(item.imageUrl)}`;
+            image.alt = item.title || "블로그 대표 이미지";
+            image.loading = "lazy";
+            image.addEventListener("error", () => {
+                image.remove();
+                media.classList.add("post-media-empty");
+                media.textContent = "N";
+            });
+            media.append(image);
+        } else {
+            media.textContent = "N";
+        }
+
+        const content = document.createElement("div");
+        content.className = "post-content";
 
         const title = document.createElement("h3");
         title.className = "post-title";
@@ -80,11 +156,16 @@ function renderResults(items) {
         link.rel = "noreferrer";
         link.textContent = "원문 보기";
 
-        card.append(title, meta, description, link);
+        content.append(title, meta, description, link);
+        card.append(media, content);
         fragment.append(card);
     });
 
-    resultList.replaceChildren(fragment);
+    if (append) {
+        resultList.append(fragment);
+    } else {
+        resultList.replaceChildren(fragment);
+    }
 }
 
 function setStatus(message, isError) {
@@ -92,9 +173,12 @@ function setStatus(message, isError) {
     statusMessage.classList.toggle("error", isError);
 }
 
-function setLoading(isLoading) {
-    searchButton.disabled = isLoading;
-    searchButton.textContent = isLoading ? "조회 중" : "조회";
+function setLoading(loading) {
+    isLoading = loading;
+    searchButton.disabled = loading;
+    loadMoreButton.disabled = loading;
+    searchButton.textContent = loading ? "조회 중" : "조회";
+    loadMoreButton.textContent = loading ? "불러오는 중" : "더보기";
 }
 
 function formatPostDate(value) {

@@ -13,8 +13,8 @@ public class BlogService {
         this.blogProvider = Objects.requireNonNull(blogProvider, "blogProvider must not be null");
     }
 
-    public List<BlogPost> refreshPosts(String searchQuery, int limit, BlogSortOption sortOption) {
-        BlogSearchCommand command = new BlogSearchCommand(searchQuery, limit, sortOption);
-        return blogProvider.fetchPosts(command.searchQuery(), command.limit(), command.sortOption());
+    public List<BlogPost> refreshPosts(String searchQuery, int limit, int start, BlogSortOption sortOption) {
+        BlogSearchCommand command = new BlogSearchCommand(searchQuery, limit, start, sortOption);
+        return blogProvider.fetchPosts(command.searchQuery(), command.limit(), command.start(), command.sortOption());
     }
 }

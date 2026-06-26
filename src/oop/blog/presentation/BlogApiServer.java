@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpServer;
 import oop.blog.application.BlogService;
 import oop.blog.domain.BlogPost;
 import oop.blog.domain.BlogSortOption;
+import oop.blog.infrastructure.AppEnvironment;
 import oop.blog.infrastructure.NaverBlogProvider;
 
 import java.io.IOException;
@@ -12,16 +13,25 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 public class BlogApiServer {
+    private static final Duration IMAGE_FETCH_TIMEOUT = Duration.ofSeconds(5);
+
     private final BlogService blogService;
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
 
     public BlogApiServer(BlogService blogService) {
         this.blogService = blogService;
@@ -31,6 +41,7 @@ public class BlogApiServer {
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/health", this::handleHealth);
         server.createContext("/api/blogs/refresh", this::handleRefresh);
+        server.createContext("/api/images", this::handleImageProxy);
         server.createContext("/", this::handleStaticFile);
         server.setExecutor(null);
         server.start();
@@ -62,13 +73,63 @@ public class BlogApiServer {
             Map<String, String> params = parseQuery(exchange.getRequestURI());
             String query = params.getOrDefault("query", "");
             int limit = parseLimit(params.getOrDefault("limit", "10"));
+            int start = parseStart(params.getOrDefault("start", "1"));
             BlogSortOption sortOption = BlogSortOption.from(params.get("sort"));
-            List<BlogPost> posts = blogService.refreshPosts(query, limit, sortOption);
-            sendJson(exchange, 200, toPostsResponse(query, sortOption, posts));
+            List<BlogPost> posts = blogService.refreshPosts(query, limit, start, sortOption);
+            sendJson(exchange, 200, toPostsResponse(query, sortOption, start, limit, posts));
         } catch (IllegalArgumentException e) {
             sendJson(exchange, 400, "{\"message\":\"" + escapeJson(e.getMessage()) + "\"}");
         } catch (IllegalStateException e) {
             sendJson(exchange, 500, "{\"message\":\"" + escapeJson(e.getMessage()) + "\"}");
+        }
+    }
+
+    private void handleImageProxy(HttpExchange exchange) throws IOException {
+        if (handleCorsPreflight(exchange)) {
+            return;
+        }
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendJson(exchange, 405, "{\"message\":\"Method Not Allowed\"}");
+            return;
+        }
+
+        try {
+            Map<String, String> params = parseQuery(exchange.getRequestURI());
+            String imageUrl = params.getOrDefault("url", "");
+            URI imageUri = URI.create(imageUrl);
+            if (!isAllowedImageUri(imageUri)) {
+                sendText(exchange, 400, "text/plain; charset=UTF-8", "Invalid image URL");
+                return;
+            }
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .GET()
+                    .uri(imageUri)
+                    .timeout(IMAGE_FETCH_TIMEOUT)
+                    .header("User-Agent", "Mozilla/5.0")
+                    .header("Referer", "https://blog.naver.com/")
+                    .build();
+            HttpResponse<byte[]> response = httpClient.send(
+                    request,
+                    HttpResponse.BodyHandlers.ofByteArray()
+            );
+
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                sendText(exchange, 502, "text/plain; charset=UTF-8", "Image fetch failed");
+                return;
+            }
+
+            String contentType = response.headers()
+                    .firstValue("Content-Type")
+                    .filter(type -> type.toLowerCase().startsWith("image/"))
+                    .orElse("image/jpeg");
+            exchange.getResponseHeaders().set("Cache-Control", "public, max-age=3600");
+            sendBytes(exchange, 200, contentType, response.body());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            sendText(exchange, 500, "text/plain; charset=UTF-8", "Image fetch interrupted");
+        } catch (Exception e) {
+            sendText(exchange, 400, "text/plain; charset=UTF-8", "Image fetch failed");
         }
     }
 
@@ -124,6 +185,19 @@ public class BlogApiServer {
         return URLDecoder.decode(value, StandardCharsets.UTF_8);
     }
 
+    private boolean isAllowedImageUri(URI imageUri) {
+        String scheme = imageUri.getScheme();
+        String host = imageUri.getHost();
+        if (scheme == null || host == null) {
+            return false;
+        }
+        boolean httpScheme = "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme);
+        boolean naverImageHost = host.endsWith("pstatic.net")
+                || host.endsWith("naver.net")
+                || host.endsWith("naver.com");
+        return httpScheme && naverImageHost;
+    }
+
     private int parseLimit(String rawLimit) {
         try {
             return Integer.parseInt(rawLimit);
@@ -132,11 +206,22 @@ public class BlogApiServer {
         }
     }
 
-    private String toPostsResponse(String query, BlogSortOption sortOption, List<BlogPost> posts) {
+    private int parseStart(String rawStart) {
+        try {
+            return Integer.parseInt(rawStart);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("검색 시작 위치는 숫자로 입력해주세요.");
+        }
+    }
+
+    private String toPostsResponse(String query, BlogSortOption sortOption, int start, int limit, List<BlogPost> posts) {
         StringBuilder json = new StringBuilder();
         json.append("{");
         json.append("\"query\":\"").append(escapeJson(query)).append("\",");
         json.append("\"sort\":\"").append(sortOption.name()).append("\",");
+        json.append("\"start\":").append(start).append(",");
+        json.append("\"limit\":").append(limit).append(",");
+        json.append("\"nextStart\":").append(start + limit).append(",");
         json.append("\"count\":").append(posts.size()).append(",");
         json.append("\"items\":[");
         for (int i = 0; i < posts.size(); i++) {
@@ -150,7 +235,8 @@ public class BlogApiServer {
             json.append("\"description\":\"").append(escapeJson(post.description())).append("\",");
             json.append("\"bloggerName\":\"").append(escapeJson(post.bloggerName())).append("\",");
             json.append("\"bloggerLink\":\"").append(escapeJson(post.bloggerLink())).append("\",");
-            json.append("\"postDate\":\"").append(escapeJson(post.postDate())).append("\"");
+            json.append("\"postDate\":\"").append(escapeJson(post.postDate())).append("\",");
+            json.append("\"imageUrl\":\"").append(escapeJson(post.imageUrl())).append("\"");
             json.append("}");
         }
         json.append("]}");
@@ -220,7 +306,7 @@ public class BlogApiServer {
     }
 
     public static void main(String[] args) throws IOException {
-        int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
+        int port = Integer.parseInt(AppEnvironment.getOrDefault("PORT", "8080"));
         BlogService blogService = new BlogService(new NaverBlogProvider());
         new BlogApiServer(blogService).start(port);
     }
