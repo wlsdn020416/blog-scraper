@@ -15,7 +15,7 @@ import java.util.List;
 
 public class NaverBlogProvider extends AbstractHttpClient implements BlogProvider {
     private static final String BLOG_API_URL = "https://openapi.naver.com/v1/search/blog.json";
-    private static final Duration PAGE_FETCH_TIMEOUT = Duration.ofSeconds(3);
+    private static final Duration PAGE_FETCH_TIMEOUT = Duration.ofSeconds(4);
 
     private final String clientId;
     private final String clientSecret;
@@ -215,7 +215,9 @@ public class NaverBlogProvider extends AbstractHttpClient implements BlogProvide
                     .GET()
                     .uri(URI.create(postUrl))
                     .timeout(PAGE_FETCH_TIMEOUT)
-                    .header("User-Agent", "Mozilla/5.0")
+                    .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                    .header("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
                     .build();
             HttpResponse<String> response = httpClient.send(
                     request,
@@ -247,6 +249,11 @@ public class NaverBlogProvider extends AbstractHttpClient implements BlogProvide
         String firstImage = extractFirstImageSrc(html);
         if (!firstImage.isBlank()) {
             return resolveUrl(baseUrl, cleanHtmlText(firstImage));
+        }
+
+        String encodedImage = extractEncodedImageUrl(html);
+        if (!encodedImage.isBlank()) {
+            return resolveUrl(baseUrl, cleanHtmlText(encodedImage));
         }
 
         return "";
@@ -285,11 +292,46 @@ public class NaverBlogProvider extends AbstractHttpClient implements BlogProvide
             if (imgEnd < 0) {
                 return "";
             }
-            String src = extractAttribute(html.substring(imgStart, imgEnd + 1), "src");
-            if (!src.isBlank() && !src.startsWith("data:")) {
-                return src;
+            String tag = html.substring(imgStart, imgEnd + 1);
+            for (String attribute : List.of("src", "data-src", "data-lazy-src", "data-original", "data-url")) {
+                String src = extractAttribute(tag, attribute);
+                if (isUsableImageUrl(src)) {
+                    return src;
+                }
             }
             cursor = imgEnd + 1;
+        }
+        return "";
+    }
+
+    private String extractEncodedImageUrl(String html) {
+        for (String marker : List.of("https://blogthumb.pstatic.net", "https://postfiles.pstatic.net", "https://blogfiles.pstatic.net")) {
+            String imageUrl = extractImageUrlAfterMarker(html, marker);
+            if (!imageUrl.isBlank()) {
+                return imageUrl;
+            }
+        }
+        return "";
+    }
+
+    private String extractImageUrlAfterMarker(String html, String marker) {
+        int start = html.indexOf(marker);
+        if (start < 0) {
+            return "";
+        }
+
+        int end = start;
+        while (end < html.length()) {
+            char current = html.charAt(end);
+            if (Character.isWhitespace(current) || current == '"' || current == '\'' || current == '<' || current == '\\') {
+                break;
+            }
+            end++;
+        }
+
+        String imageUrl = html.substring(start, end);
+        if (isUsableImageUrl(imageUrl)) {
+            return imageUrl;
         }
         return "";
     }
@@ -342,6 +384,22 @@ public class NaverBlogProvider extends AbstractHttpClient implements BlogProvide
         } catch (Exception e) {
             return imageUrl;
         }
+    }
+
+    private boolean isUsableImageUrl(String imageUrl) {
+        if (imageUrl == null || imageUrl.isBlank()) {
+            return false;
+        }
+
+        String normalized = imageUrl.trim().toLowerCase();
+        return !normalized.startsWith("data:")
+                && !normalized.endsWith(".gif")
+                && !normalized.contains("blank.gif")
+                && !normalized.contains("spacer")
+                && (normalized.startsWith("http://")
+                || normalized.startsWith("https://")
+                || normalized.startsWith("//")
+                || normalized.startsWith("/"));
     }
 
     private String toMobileBlogUrl(String postUrl) {
