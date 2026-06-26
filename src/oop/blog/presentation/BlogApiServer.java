@@ -137,7 +137,8 @@ public class BlogApiServer {
         if (handleCorsPreflight(exchange)) {
             return;
         }
-        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+        boolean headRequest = "HEAD".equalsIgnoreCase(exchange.getRequestMethod());
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod()) && !headRequest) {
             sendJson(exchange, 405, "{\"message\":\"Method Not Allowed\"}");
             return;
         }
@@ -145,6 +146,9 @@ public class BlogApiServer {
         Path publicRoot = Paths.get("public").toAbsolutePath().normalize();
         String requestPath = exchange.getRequestURI().getPath();
         String fileName = "/".equals(requestPath) ? "/index.html" : requestPath;
+        if ("/favicon.ico".equals(fileName)) {
+            fileName = "/favicon.svg";
+        }
         Path filePath = publicRoot.resolve(fileName.substring(1)).normalize();
 
         if (!filePath.startsWith(publicRoot) || !Files.exists(filePath) || Files.isDirectory(filePath)) {
@@ -153,6 +157,13 @@ public class BlogApiServer {
         }
 
         byte[] bytes = Files.readAllBytes(filePath);
+        if (headRequest) {
+            addCorsHeaders(exchange);
+            exchange.getResponseHeaders().set("Content-Type", contentType(filePath));
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+            return;
+        }
         sendBytes(exchange, 200, contentType(filePath), bytes);
     }
 
