@@ -177,17 +177,17 @@ async function loadCardImage(item, media) {
             return;
         }
         const image = document.createElement("img");
-        image.src = `/api/images?url=${encodeURIComponent(imageUrl)}`;
         image.alt = item.title || "블로그 대표 이미지";
         image.loading = "lazy";
         image.addEventListener("load", () => {
-            media.replaceChildren(image);
             media.classList.remove("post-media-empty");
         });
         image.addEventListener("error", () => {
             media.classList.add("post-media-empty");
             media.textContent = "N";
         });
+        media.replaceChildren(image);
+        image.src = `/api/images?url=${encodeURIComponent(imageUrl)}`;
     } catch (error) {
         media.classList.add("post-media-empty");
         media.textContent = "N";

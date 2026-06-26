@@ -24,6 +24,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
 
 public class BlogApiServer {
     private static final Duration IMAGE_FETCH_TIMEOUT = Duration.ofSeconds(5);
@@ -44,7 +45,7 @@ public class BlogApiServer {
         server.createContext("/api/blogs/image", this::handleBlogImage);
         server.createContext("/api/images", this::handleImageProxy);
         server.createContext("/", this::handleStaticFile);
-        server.setExecutor(null);
+        server.setExecutor(Executors.newFixedThreadPool(12));
         server.start();
         System.out.println("Blog API server started: http://localhost:" + port);
     }
