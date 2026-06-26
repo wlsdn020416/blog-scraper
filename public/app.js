@@ -99,6 +99,7 @@ function filterNewItems(items) {
 
 function renderResults(items, { append }) {
     const fragment = document.createDocumentFragment();
+    const cardsToLoad = [];
 
     items.forEach((item) => {
         const card = document.createElement("article");
@@ -110,20 +111,7 @@ function renderResults(items, { append }) {
         media.target = "_blank";
         media.rel = "noreferrer";
 
-        if (item.imageUrl) {
-            const image = document.createElement("img");
-            image.src = `/api/images?url=${encodeURIComponent(item.imageUrl)}`;
-            image.alt = item.title || "블로그 대표 이미지";
-            image.loading = "lazy";
-            image.addEventListener("error", () => {
-                image.remove();
-                media.classList.add("post-media-empty");
-                media.textContent = "N";
-            });
-            media.append(image);
-        } else {
-            media.textContent = "N";
-        }
+        media.textContent = "N";
 
         const content = document.createElement("div");
         content.className = "post-content";
@@ -159,12 +147,50 @@ function renderResults(items, { append }) {
         content.append(title, meta, description, link);
         card.append(media, content);
         fragment.append(card);
+        cardsToLoad.push({ item, media });
     });
 
     if (append) {
         resultList.append(fragment);
     } else {
         resultList.replaceChildren(fragment);
+    }
+
+    cardsToLoad.forEach(({ item, media }) => {
+        loadCardImage(item, media);
+    });
+}
+
+async function loadCardImage(item, media) {
+    try {
+        let imageUrl = item.imageUrl || "";
+        if (!imageUrl) {
+            const params = new URLSearchParams({ url: item.link });
+            const response = await fetch(`/api/blogs/image?${params.toString()}`);
+            if (!response.ok) {
+                return;
+            }
+            const data = await response.json();
+            imageUrl = data.imageUrl || "";
+        }
+        if (!imageUrl) {
+            return;
+        }
+        const image = document.createElement("img");
+        image.src = `/api/images?url=${encodeURIComponent(imageUrl)}`;
+        image.alt = item.title || "블로그 대표 이미지";
+        image.loading = "lazy";
+        image.addEventListener("load", () => {
+            media.replaceChildren(image);
+            media.classList.remove("post-media-empty");
+        });
+        image.addEventListener("error", () => {
+            media.classList.add("post-media-empty");
+            media.textContent = "N";
+        });
+    } catch (error) {
+        media.classList.add("post-media-empty");
+        media.textContent = "N";
     }
 }
 

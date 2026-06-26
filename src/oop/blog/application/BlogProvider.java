@@ -7,4 +7,6 @@ import java.util.List;
 
 public interface BlogProvider {
     List<BlogPost> fetchPosts(String searchQuery, int limit, int start, BlogSortOption sortOption);
+
+    String fetchImageUrl(String postUrl);
 }

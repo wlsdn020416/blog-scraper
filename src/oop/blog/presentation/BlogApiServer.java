@@ -41,6 +41,7 @@ public class BlogApiServer {
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/health", this::handleHealth);
         server.createContext("/api/blogs/refresh", this::handleRefresh);
+        server.createContext("/api/blogs/image", this::handleBlogImage);
         server.createContext("/api/images", this::handleImageProxy);
         server.createContext("/", this::handleStaticFile);
         server.setExecutor(null);
@@ -77,6 +78,27 @@ public class BlogApiServer {
             BlogSortOption sortOption = BlogSortOption.from(params.get("sort"));
             List<BlogPost> posts = blogService.refreshPosts(query, limit, start, sortOption);
             sendJson(exchange, 200, toPostsResponse(query, sortOption, start, limit, posts));
+        } catch (IllegalArgumentException e) {
+            sendJson(exchange, 400, "{\"message\":\"" + escapeJson(e.getMessage()) + "\"}");
+        } catch (IllegalStateException e) {
+            sendJson(exchange, 500, "{\"message\":\"" + escapeJson(e.getMessage()) + "\"}");
+        }
+    }
+
+    private void handleBlogImage(HttpExchange exchange) throws IOException {
+        if (handleCorsPreflight(exchange)) {
+            return;
+        }
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendJson(exchange, 405, "{\"message\":\"Method Not Allowed\"}");
+            return;
+        }
+
+        try {
+            Map<String, String> params = parseQuery(exchange.getRequestURI());
+            String postUrl = params.getOrDefault("url", "");
+            String imageUrl = blogService.findImageUrl(postUrl);
+            sendJson(exchange, 200, "{\"imageUrl\":\"" + escapeJson(imageUrl) + "\"}");
         } catch (IllegalArgumentException e) {
             sendJson(exchange, 400, "{\"message\":\"" + escapeJson(e.getMessage()) + "\"}");
         } catch (IllegalStateException e) {
@@ -147,7 +169,7 @@ public class BlogApiServer {
         String requestPath = exchange.getRequestURI().getPath();
         String fileName = "/".equals(requestPath) ? "/index.html" : requestPath;
         if ("/favicon.ico".equals(fileName)) {
-            fileName = "/favicon.svg";
+            fileName = "/favicon.png";
         }
         Path filePath = publicRoot.resolve(fileName.substring(1)).normalize();
 
@@ -285,6 +307,9 @@ public class BlogApiServer {
         }
         if (fileName.endsWith(".svg")) {
             return "image/svg+xml";
+        }
+        if (fileName.endsWith(".png")) {
+            return "image/png";
         }
         return "application/octet-stream";
     }

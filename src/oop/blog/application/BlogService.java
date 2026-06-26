@@ -17,4 +17,11 @@ public class BlogService {
         BlogSearchCommand command = new BlogSearchCommand(searchQuery, limit, start, sortOption);
         return blogProvider.fetchPosts(command.searchQuery(), command.limit(), command.start(), command.sortOption());
     }
+
+    public String findImageUrl(String postUrl) {
+        if (postUrl == null || postUrl.isBlank()) {
+            throw new IllegalArgumentException("블로그 글 URL이 필요합니다.");
+        }
+        return blogProvider.fetchImageUrl(postUrl);
+    }
 }

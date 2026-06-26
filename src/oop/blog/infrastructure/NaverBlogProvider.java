@@ -80,10 +80,15 @@ public class NaverBlogProvider extends AbstractHttpClient implements BlogProvide
                     cleanNaverText(getJsonString(item, "bloggername")),
                     getJsonString(item, "bloggerlink"),
                     getJsonString(item, "postdate"),
-                    findImageUrl(link)
+                    ""
             ));
         }
         return posts;
+    }
+
+    @Override
+    public String fetchImageUrl(String postUrl) {
+        return findImageUrl(postUrl);
     }
 
     private List<String> extractItemObjects(String body) {
@@ -196,20 +201,20 @@ public class NaverBlogProvider extends AbstractHttpClient implements BlogProvide
             return "";
         }
 
-        String imageUrl = fetchImageUrl(postUrl);
+        String imageUrl = fetchImageUrlFromPage(postUrl);
         if (!imageUrl.isBlank()) {
             return imageUrl;
         }
 
         String mobileUrl = toMobileBlogUrl(postUrl);
         if (!mobileUrl.equals(postUrl)) {
-            return fetchImageUrl(mobileUrl);
+            return fetchImageUrlFromPage(mobileUrl);
         }
 
         return "";
     }
 
-    private String fetchImageUrl(String postUrl) {
+    private String fetchImageUrlFromPage(String postUrl) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .GET()
